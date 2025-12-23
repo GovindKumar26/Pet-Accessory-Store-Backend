@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Redirecting to PayU...</title>
+</head>
+<body onload="document.forms['payuForm'].submit()">
+    <div style="text-align: center; margin-top: 100px; font-family: Arial, sans-serif;">
+        <h2>Forwarding to Payment Gateway...</h2>
+        <p>Please do not refresh the page or click the back button.</p>
+    </div>
+
+    <form name="payuForm" action="https://test.payu.in/_payment" method="POST">
+        <input type="hidden" name="key" value="6ZVygB" />
+        <input type="hidden" name="txnid" value="TXN_6947ff340a1d07f127a5155b_1766343513267" />
+        <input type="hidden" name="amount" value="5003.64" />
+        <input type="hidden" name="productinfo" value="Order VT-2025-A5155B" />
+        <input type="hidden" name="hash" value="9e2af6f8a32cf8a459ae88fb7dc07d2cb306415490c539114885b5c425c044820e8b174c6bb07209a9c0aaa2169ecadbfe7bfbebfc02346ea10c195ab4869102" />
+        
+        <input type="hidden" name="firstname" value="Rahul" />
+        <input type="hidden" name="email" value="user1@test.com" />
+        <input type="hidden" name="phone" value="9000011111" />
+        
+        <input type="hidden" name="surl" value="https://nonadjunctive-placatingly-elke.ngrok-free.dev/api/payments/success" />
+        <input type="hidden" name="furl" value="https://nonadjunctive-placatingly-elke.ngrok-free.dev/api/payments/failure" />
+        
+        <input type="hidden" name="udf1" value="6947ff340a1d07f127a5155b" />
+        <input type="hidden" name="udf2" value="VT-2025-A5155B" />
+        <input type="hidden" name="udf3" value="6947fb8e0a1d07f127a514f8" />
+        <input type="hidden" name="udf4" value="" />
+        <input type="hidden" name="udf5" value="" />
+
+        <noscript>
+            <div style="text-align: center;">
+                <p>JavaScript is disabled. Please click the button below to continue.</p>
+                <input type="submit" value="Pay Now" />
+            </div>
+        </noscript>
+    </form>
+</body>
+</html>

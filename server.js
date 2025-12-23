@@ -1,11 +1,20 @@
-import express from 'express';
-import dotenv from 'dotenv';
+
+import express from "express";
+import 'dotenv/config';
+
+
+// Debug: Check if Razorpay env vars are loaded
+// console.log('Environment Check:');
+// console.log('RAZORPAY_KEY_ID:', process.env.RAZORPAY_KEY_ID ? 'LOADED' : 'NOT LOADED');
+//console.log('RAZORPAY_KEY_SECRET:', process.env.RAZORPAY_KEY_SECRET ? 'LOADED' : 'NOT LOADED');
+
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import 'express-async-errors';
 import morgan from 'morgan';
 import mongoose from 'mongoose';
+
 
 import connectDB from './config/database.js';
 import { globalLimiter, authLimiter, adminLimiter, apiLimiter } from './middleware/rateLimiter.js';
@@ -14,12 +23,65 @@ import productRoutes from './routes/products.js';
 import orderRoutes from './routes/orders.js';
 import paymentRoutes from './routes/payments.js';
 import adminRoutes from './routes/admin.js';
+import razorpayWebhook from "./routes/razorpayWebhook.js";
+// import './cron.js'
+//import the cron job later 
+//import './jobs/shiprocketTrackingCron.js';
 
-dotenv.config();
+
 
 const app = express();
 let server;
-app.use(helmet());
+
+
+// app.use(
+//   helmet({
+//     contentSecurityPolicy: {
+//       useDefaults: true,
+//       directives: {
+//         "script-src": [
+//           "'self'",
+//           "https://checkout.razorpay.com"
+//         ],
+
+//         "script-src-elem": [
+//           "'self'",
+//           "https://checkout.razorpay.com"
+//         ],
+
+//         "frame-src": [
+//           "'self'",
+//           "https://checkout.razorpay.com",
+//           "https://api.razorpay.com"
+//         ],
+
+//         "connect-src": [
+//           "'self'",
+//           "https://api.razorpay.com",
+//           "https://lumberjack.razorpay.com",
+//           "https://browser.sentry-cdn.com"
+//         ],
+
+//         "img-src": [
+//           "'self'",
+//           "data:",
+//           "https://checkout.razorpay.com"
+//         ]
+//       }
+//     }
+//   })
+// );
+
+
+
+
+app.use(
+  "/api/webhooks/razorpay",
+  express.raw({ type: "application/json" })
+);
+
+
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -38,12 +100,18 @@ const FRONT = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 // CORS must allow credentials and must specify the exact origin (not '*')
 app.use(cors({ origin: FRONT, credentials: true }));
 
+
+app.use(express.static('public'));
+
+
 // If you sit behind a reverse proxy in dev (less common) you might need:
 // app.set('trust proxy', true);
 if (process.env.NODE_ENV === 'production') {
-  app.set('trust proxy', 1);
+  app.set('trust proxy', true);
 }
 
+
+app.use("/api/webhooks", razorpayWebhook);
 // Apply rate limiters
 app.use(globalLimiter);  // Global rate limit for all routes
 
@@ -65,10 +133,18 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+// 404 handler for undefined routes
+app.use((req, res, next) => {
+  res.status(404).json({ 
+    error: 'Not Found',
+    message: `Cannot ${req.method} ${req.path}`,
+    path: req.path
+  });
+});
 
-
+// Error handler
 app.use((err, req, res, next) => {
-  console.error(err);
+if(process.env.NODE_ENV==='development')  console.error(err);
 
   const status = err.statusCode || err.status || 500;
   const message = err.message || 'Server error';
@@ -83,8 +159,8 @@ const PORT = process.env.PORT || 5000;
 connectDB()
   .then(() => {
       server =  app.listen(PORT, () => {
-      console.log(`✓ Server running on http://localhost:${PORT}`);
-      console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
   })
   .catch(err => {

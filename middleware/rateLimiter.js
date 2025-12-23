@@ -9,10 +9,10 @@ export const globalLimiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.'
 });
 
-// 2. Auth - strict for login/register
+// 2. Auth - strict for login/register (relaxed in development)
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: process.env.NODE_ENV === 'production' ? 5 : 100,  // Strict in prod, relaxed in dev
   skipSuccessfulRequests: true,  // Only count failed attempts
   message: 'Too many authentication attempts, please try again after 15 minutes'
 });
@@ -20,7 +20,7 @@ export const authLimiter = rateLimit({
 // 3. Admin - moderate for admin operations
 export const adminLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 30,
+  max: 100,
   message: 'Too many admin requests, please slow down'
 });
 
