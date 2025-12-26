@@ -1,9 +1,10 @@
 import express from 'express';
 import User from '../models/User.js';
+import PendingRegistration from '../models/PendingRegistration.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { authenticate } from '../middleware/auth.js';
-import Order from '../models/Order.js';
+import { sendVerificationEmail } from '../services/emailService.js';
 
 const router = express.Router();
 
@@ -21,6 +22,11 @@ const cookieOptions = () => {
   };
 };
 
+/**
+ * POST /register
+ * Creates a pending registration and sends verification email.
+ * User is NOT added to DB until email is verified.
+ */
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -36,23 +42,50 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ error: 'User exists' });
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'An account with this email already exists. Please login.' });
+    }
 
-    const user = await User.create({ name, email, passwordHash: password });
+    // Check if pending registration exists
+    const existingPending = await PendingRegistration.findOne({ email });
+    if (existingPending) {
+      // Resend verification email
+      await sendVerificationEmail(email, name, existingPending.verificationToken);
+      return res.json({
+        message: 'Verification email resent. Please check your inbox.',
+        requiresVerification: true
+      });
+    }
 
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    const access = signAccess({ id: user._id });
-    const refresh = signRefresh({ id: user._id });
+    // Generate verification token
+    const verificationToken = PendingRegistration.generateToken();
 
-    res.cookie('refreshToken', refresh, cookieOptions());
-    res.json({ user, accessToken: access });
+    // Create pending registration
+    await PendingRegistration.create({
+      name: name.trim(),
+      email,
+      passwordHash,
+      verificationToken
+    });
+
+    // Send verification email
+    await sendVerificationEmail(email, name, verificationToken);
+
+    res.status(201).json({
+      message: 'Registration successful! Please check your email to verify your account.',
+      requiresVerification: true
+    });
   } catch (err) {
     console.error('Register error:', err);
 
     // Handle MongoDB duplicate key error (race condition)
     if (err.code === 11000) {
-      return res.status(400).json({ error: 'An account with this email already exists. Please login or use a different email.' });
+      return res.status(400).json({ error: 'An account with this email already exists.' });
     }
 
     // Handle mongoose validation errors
@@ -65,6 +98,100 @@ router.post('/register', async (req, res) => {
   }
 });
 
+/**
+ * GET /verify-email/:token
+ * Verifies email and creates the actual user account.
+ */
+router.get('/verify-email/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token is required' });
+    }
+
+    // Find pending registration
+    const pending = await PendingRegistration.findOne({ verificationToken: token });
+
+    if (!pending) {
+      return res.status(400).json({ error: 'Invalid or expired verification link. Please register again.' });
+    }
+
+    // Check if user already exists (edge case)
+    const existingUser = await User.findOne({ email: pending.email });
+    if (existingUser) {
+      // Delete pending registration
+      await PendingRegistration.deleteOne({ _id: pending._id });
+      return res.status(400).json({ error: 'This email is already verified. Please login.' });
+    }
+
+    // Create the actual user
+    const user = await User.create({
+      name: pending.name,
+      email: pending.email,
+      passwordHash: pending.passwordHash // Already hashed
+    });
+
+    // Delete pending registration
+    await PendingRegistration.deleteOne({ _id: pending._id });
+
+    // Auto-login: generate tokens
+    const access = signAccess({ id: user._id });
+    const refresh = signRefresh({ id: user._id });
+
+    res.cookie('refreshToken', refresh, cookieOptions());
+    res.json({
+      message: 'Email verified successfully! You are now logged in.',
+      user: user.toJSON(),
+      accessToken: access,
+      verified: true
+    });
+  } catch (err) {
+    console.error('Verify email error:', err);
+    res.status(500).json({ error: 'Verification failed. Please try again later.' });
+  }
+});
+
+/**
+ * POST /resend-verification
+ * Resends verification email for pending registrations.
+ */
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'This email is already verified. Please login.' });
+    }
+
+    // Find pending registration
+    const pending = await PendingRegistration.findOne({ email });
+    if (!pending) {
+      return res.status(400).json({ error: 'No pending registration found. Please register first.' });
+    }
+
+    // Generate new token
+    const newToken = PendingRegistration.generateToken();
+    pending.verificationToken = newToken;
+    pending.expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // Reset expiry
+    await pending.save();
+
+    // Send verification email
+    await sendVerificationEmail(email, pending.name, newToken);
+
+    res.json({ message: 'Verification email sent. Please check your inbox.' });
+  } catch (err) {
+    console.error('Resend verification error:', err);
+    res.status(500).json({ error: 'Failed to resend verification email. Please try again later.' });
+  }
+});
+
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -74,9 +201,22 @@ router.post('/login', async (req, res) => {
     }
 
     const user = await User.findOne({ email }).select('+passwordHash');
-    if (!user) return res.status(400).json({ error: 'Email not found' });
+    if (!user) {
+      // Check if there's a pending registration
+      const pending = await PendingRegistration.findOne({ email });
+      if (pending) {
+        return res.status(400).json({
+          error: 'Please verify your email first. Check your inbox for the verification link.',
+          requiresVerification: true,
+          email: email
+        });
+      }
+      return res.status(400).json({ error: 'Email not found' });
+    }
+
     const ok = await user.comparePassword(password);
     if (!ok) return res.status(400).json({ error: 'Invalid password' });
+
     const access = signAccess({ id: user._id });
     const refresh = signRefresh({ id: user._id });
 
@@ -149,7 +289,5 @@ router.get('/me', authenticate, async (req, res) => {
     res.status(500).json({ error: 'Failed to retrieve user profile. Please try again.' });
   }
 });
-
-
 
 export default router;

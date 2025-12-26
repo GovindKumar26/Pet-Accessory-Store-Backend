@@ -23,6 +23,7 @@ import productRoutes from './routes/products.js';
 import orderRoutes from './routes/orders.js';
 import paymentRoutes from './routes/payments.js';
 import adminRoutes from './routes/admin.js';
+import discountRoutes from './routes/discounts.js';
 import razorpayWebhook from "./routes/razorpayWebhook.js";
 // import './cron.js'
 //import the cron job later 
@@ -95,10 +96,19 @@ if (process.env.NODE_ENV === 'development') {
 
 
 // IMPORTANT: default FRONT to your frontend origin (you said http://localhost:3000)
-const FRONT = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
+const FRONT = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-// CORS must allow credentials and must specify the exact origin (not '*')
-app.use(cors({ origin: FRONT, credentials: true }));
+// CORS configuration - allow both common Vite ports
+const corsOptions = {
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    FRONT
+  ],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
 
 
 app.use(express.static('public'));
@@ -118,6 +128,7 @@ app.use(globalLimiter);  // Global rate limit for all routes
 // Apply specific rate limiters to route groups
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/products', apiLimiter, productRoutes);
+app.use('/api/discounts', apiLimiter, discountRoutes); // Public discounts endpoint
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminLimiter, adminRoutes);
@@ -135,7 +146,7 @@ app.get('/api/health', async (req, res) => {
 
 // 404 handler for undefined routes
 app.use((req, res, next) => {
-  res.status(404).json({ 
+  res.status(404).json({
     error: 'Not Found',
     message: `Cannot ${req.method} ${req.path}`,
     path: req.path
@@ -144,7 +155,7 @@ app.use((req, res, next) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-if(process.env.NODE_ENV==='development')  console.error(err);
+  if (process.env.NODE_ENV === 'development') console.error(err);
 
   const status = err.statusCode || err.status || 500;
   const message = err.message || 'Server error';
@@ -158,7 +169,7 @@ const PORT = process.env.PORT || 5000;
 // Connect to database and start server
 connectDB()
   .then(() => {
-      server =  app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });

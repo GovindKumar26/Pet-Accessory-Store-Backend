@@ -1,6 +1,9 @@
 import express from 'express';
 import Order from '../models/Order.js';
+import User from '../models/User.js';
 import Product from '../models/Product.js';
+import { restoreInventory } from '../utils/inventory.js';
+import { sendOrderCancellationEmail } from '../services/emailService.js';
 import Discount from '../models/Discount.js';
 import TaxConfig from '../models/TaxConfig.js';
 import { authenticate } from '../middleware/auth.js';
@@ -55,7 +58,7 @@ router.post('/', async (req, res) => {
 
       if (!item.productId || !item.quantity || item.quantity < 1) {
         return res.status(400).json({
-          error: `Item ${i + 1}: Product ID and quantity (min 1) are required`
+          error: `Item ${i + 1}: Product ID and quantity(min 1) are required`
         });
       }
 
@@ -77,7 +80,7 @@ router.post('/', async (req, res) => {
       // Check stock availability
       if (!product.hasEnoughStock(item.quantity)) {
         return res.status(400).json({
-          error: `Item ${i + 1}: Insufficient stock. Only ${product.inventory} available.`
+          error: `Item ${i + 1}: Insufficient stock.Only ${product.inventory} available.`
         });
       }
 
@@ -117,7 +120,7 @@ router.post('/', async (req, res) => {
           timeZone: 'Asia/Kolkata'
         });
         return res.status(400).json({
-          error: `Discount code is not yet active. It will start on ${startDate}`
+          error: `Discount code is not yet active.It will start on ${startDate} `
         });
       }
 
@@ -206,7 +209,7 @@ router.post('/', async (req, res) => {
 
     if (err.name === 'ValidationError') {
       const messages = Object.values(err.errors).map(e => e.message);
-      return res.status(400).json({ error: `Validation failed: ${messages.join(', ')}` });
+      return res.status(400).json({ error: `Validation failed: ${messages.join(', ')} ` });
     }
 
     res.status(500).json({ error: 'Failed to create order. Please try again.' });
@@ -296,7 +299,7 @@ router.post('/:id/cancel', async (req, res) => {
     if (!order.canBeCancelled()) {
       return res.status(400).json({
         error: 'Order cannot be cancelled',
-        message: `Orders can only be cancelled when status is 'pending' or 'confirmed'. Current status: ${order.status}`
+        message: `Orders can only be cancelled when status is 'pending' or 'confirmed'.Current status: ${order.status} `
       });
     }
 
@@ -329,6 +332,16 @@ router.post('/:id/cancel', async (req, res) => {
 
     await order.save();
 
+    // Send cancellation email
+    try {
+      const user = await User.findById(order.userId);
+      if (user) {
+        await sendOrderCancellationEmail(order, user);
+      }
+    } catch (emailError) {
+      console.error('Email sending failed (non-critical):', emailError);
+    }
+
     res.json({
       success: true,
       message: 'Order cancelled successfully',
@@ -348,6 +361,75 @@ router.post('/:id/cancel', async (req, res) => {
   }
 });
 
+
+// Request return for a delivered order
+router.post('/:id/return', async (req, res) => {
+  try {
+    const { reason } = req.body;
+
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'Return reason is required' });
+    }
+
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Authorization: User can only request return for their own orders
+    if (order.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Access denied. You can only request returns for your own orders.' });
+    }
+
+    // Check if order can have return requested
+    if (!order.canRequestReturn()) {
+      // Determine specific reason
+      if (order.status !== 'delivered') {
+        return res.status(400).json({ error: 'Returns can only be requested for delivered orders' });
+      }
+      if (order.returnRequest?.requested) {
+        return res.status(400).json({ error: 'A return request has already been submitted for this order' });
+      }
+      // Check 10-day window
+      const deliveredAt = order.logistics?.deliveredAt;
+      if (deliveredAt) {
+        const daysSinceDelivery = Math.floor((Date.now() - new Date(deliveredAt)) / (1000 * 60 * 60 * 24));
+        if (daysSinceDelivery > 15) {
+          return res.status(400).json({
+            error: 'Return window has expired. Returns must be requested within 15 days of delivery.'
+          });
+        }
+      }
+      return res.status(400).json({ error: 'This order is not eligible for return' });
+    }
+
+    // Update order with return request
+    order.returnRequest = {
+      requested: true,
+      requestedAt: new Date(),
+      reason: reason.trim(),
+      status: 'requested'
+    };
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Return request submitted successfully. Our team will review and process your request.',
+      order
+    });
+
+  } catch (err) {
+    console.error('Return request error:', err);
+
+    if (err.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid order ID format' });
+    }
+
+    res.status(500).json({ error: 'Failed to submit return request. Please try again.' });
+  }
+});
 
 
 export default router;

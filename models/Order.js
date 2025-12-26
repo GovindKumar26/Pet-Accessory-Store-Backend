@@ -72,14 +72,14 @@ const OrderSchema = new mongoose.Schema({
     awb: String,
     courierName: String,
     status: {
-  type: String,
-  enum: ['created', 'shipped', 'in_transit', 'delivered', 'rto', 'cancelled']
-}
-,deliveryNotified: {
-  type: Boolean,
-  default: false
-}
-,
+      type: String,
+      enum: ['created', 'shipped', 'in_transit', 'delivered', 'rto', 'cancelled']
+    }
+    , deliveryNotified: {
+      type: Boolean,
+      default: false
+    }
+    ,
     shippedAt: Date,
     deliveredAt: Date
   }
@@ -154,6 +154,26 @@ const OrderSchema = new mongoose.Schema({
     default: 'none'
   },
 
+  // Return Request
+  returnRequest: {
+    requested: { type: Boolean, default: false },
+    requestedAt: Date,
+    reason: String,
+    status: {
+      type: String,
+      enum: ['none', 'requested', 'approved', 'rejected', 'pickup_scheduled', 'picked_up', 'completed'],
+      default: 'none'
+    },
+    adminNotes: String,
+    processedAt: Date,
+    processedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Shiprocket return shipment info
+    returnShipmentId: String,
+    returnOrderId: String,
+    returnAwb: String,
+    returnCourier: String
+  },
+
   orderNumber: { type: String, unique: true }
 }, { timestamps: true });
 
@@ -202,6 +222,24 @@ OrderSchema.methods.canBeRefunded = function () {
 
   // system-expired orders never get refunds
   if (this.cancelledBy === 'system') return false;
+
+  return true;
+};
+
+// Check if order can request return (delivered within 15 days)
+OrderSchema.methods.canRequestReturn = function () {
+  // Must be delivered
+  if (this.status !== 'delivered') return false;
+
+  // Must not already have a return request
+  if (this.returnRequest?.requested) return false;
+
+  // Must be within 15 days of delivery
+  const deliveredAt = this.logistics?.deliveredAt;
+  if (!deliveredAt) return false;
+
+  const daysSinceDelivery = Math.floor((Date.now() - new Date(deliveredAt)) / (1000 * 60 * 60 * 24));
+  if (daysSinceDelivery > 15) return false;
 
   return true;
 };

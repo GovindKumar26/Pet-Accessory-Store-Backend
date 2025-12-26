@@ -1,6 +1,8 @@
 import express from 'express';
 import crypto from 'crypto';
 import Order from '../models/Order.js';
+import User from '../models/User.js';
+import { sendOrderConfirmationEmail } from '../services/emailService.js';
 import { authenticate } from '../middleware/auth.js';
 import { restoreInventory } from '../utils/inventory.js';
 
@@ -266,8 +268,8 @@ router.post('/:orderId/initiate', authenticate, async (req, res) => {
       firstname: order.shippingAddress.name.split(' ')[0],
       email: req.user.email,
       phone: order.shippingAddress.phone,
-      surl: `${process.env.BACKEND_URL}/api/payments/success`,      // Success URL
-      furl: `${process.env.BACKEND_URL}/api/payments/failure`,      // Failure URL
+      surl: `${process.env.BACKEND_URL}/api/payments/success`,      // Backend Success URL
+      furl: `${process.env.BACKEND_URL}/api/payments/failure`,      // Backend Failure URL
       udf1: order._id.toString(),           // Store orderId
       udf2: order.orderNumber,              // Store orderNumber
       udf3: req.user._id.toString(),        // Store userId
@@ -306,14 +308,16 @@ router.post('/success', async (req, res) => {
     // 1. Extract orderId FIRST
     const orderId = payuResponse.udf1;
     if (!orderId) {
-      return res.status(400).send('Order ID not found');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?error_Message=${encodeURIComponent('Order ID not found')}`);
     }
 
     // 2. Fetch order
     // In /success and /failure
     const order = await Order.findById(orderId).populate('items.productId');
     if (!order) {
-      return res.status(404).send('Order not found');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?error_Message=${encodeURIComponent('Order not found')}`);
     }
 
     // 3. Verify hash AFTER fetching order
@@ -330,12 +334,14 @@ router.post('/success', async (req, res) => {
 
       await order.save();
       console.error('Invalid PayU hash signature');
-      return res.send('OK'); // IMPORTANT: always 200
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?orderId=${orderId}&error_Message=${encodeURIComponent('Payment verification failed')}`);
     }
 
     // 4. Ignore if already cancelled
     if (order.status === 'cancelled') {
-      return res.send('OK');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?orderId=${orderId}&error_Message=${encodeURIComponent('Order was already cancelled')}`);
     }
 
     // 5. Record payment attempt
@@ -360,6 +366,16 @@ router.post('/success', async (req, res) => {
         }
 
         order.status = 'confirmed';
+
+        // Send order confirmation email
+        try {
+          const user = await User.findById(order.userId);
+          if (user) {
+            await sendOrderConfirmationEmail(order, user);
+          }
+        } catch (emailError) {
+          console.error('Email sending failed (non-critical):', emailError);
+        }
       }
     }
     // 7. Handle failure
@@ -376,11 +392,15 @@ router.post('/success', async (req, res) => {
     }
 
     await order.save();
-    return res.send('OK');
+
+    // Redirect user to frontend success page
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/payment/success?orderId=${orderId}&status=${payuResponse.status}`);
 
   } catch (error) {
     console.error('PayU success callback error:', error);
-    return res.status(500).send('Error processing payment');
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/payment/failure?error_Message=${encodeURIComponent('Error processing payment')}`);
   }
 });
 
@@ -393,14 +413,16 @@ router.post('/failure', async (req, res) => {
     // 1. Extract orderId first
     const orderId = payuResponse.udf1;
     if (!orderId) {
-      return res.send('OK'); // never error to PayU
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?error_Message=${encodeURIComponent('Order ID not found')}`);
     }
 
     // 2. Fetch order
-   // In /success and /failure
-const order = await Order.findById(orderId).populate('items.productId');
+    // In /success and /failure
+    const order = await Order.findById(orderId).populate('items.productId');
     if (!order) {
-      return res.send('OK');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?error_Message=${encodeURIComponent('Order not found')}`);
     }
 
     // 3. Verify hash AFTER fetching order
@@ -416,12 +438,14 @@ const order = await Order.findById(orderId).populate('items.productId');
 
       await order.save();
       console.error('Invalid PayU hash signature');
-      return res.send('OK');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/failure?orderId=${orderId}&error_Message=${encodeURIComponent('Payment verification failed')}`);
     }
 
     // 4. Ignore if already paid
     if (order.payment.status === 'paid') {
-      return res.send('OK');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/payment/success?orderId=${orderId}&status=success`);
     }
 
     // 5. Record failure attempt
@@ -449,11 +473,15 @@ const order = await Order.findById(orderId).populate('items.productId');
     await order.save();
     console.log(`Order ${order.orderNumber} payment failed`);
 
-    return res.send('OK');
+    // Redirect user to frontend failure page
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const errorMessage = payuResponse.error_Message || payuResponse.field9 || 'Payment failed';
+    return res.redirect(`${frontendUrl}/payment/failure?orderId=${orderId}&error_Message=${encodeURIComponent(errorMessage)}`);
 
   } catch (error) {
     console.error('PayU failure callback error:', error);
-    return res.send('OK'); // NEVER 500 to gateway
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/payment/failure?error_Message=${encodeURIComponent('Error processing payment failure')}`);
   }
 });
 

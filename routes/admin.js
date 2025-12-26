@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Product from '../models/Product.js';
 import Discount from '../models/Discount.js';
 import TaxConfig from '../models/TaxConfig.js';
@@ -6,8 +7,9 @@ import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 import cloudinary from '../config/cloudinary.js';
 import Order from '../models/Order.js';
-import { createShipmentFromOrder } from '../services/shiprocket.js';
-
+import User from '../models/User.js';
+import { createShipmentFromOrder, createReturnPickup } from '../services/shiprocket.js';
+import { sendShippingNotificationEmail, sendRefundApprovalEmail, sendRefundRejectionEmail } from '../services/emailService.js';
 
 
 // Admin API expects price in RUPEES (decimal)
@@ -160,6 +162,82 @@ router.put(
     }
   }
 );
+
+// DELETE /admin/products/:id - Delete a product
+router.delete('/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find and delete the product
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    // Delete images from Cloudinary
+    if (product.images && product.images.length > 0) {
+      for (const image of product.images) {
+        if (image.publicId) {
+          try {
+            await cloudinary.uploader.destroy(image.publicId);
+          } catch (cloudinaryError) {
+            console.error('Failed to delete image from Cloudinary:', cloudinaryError);
+            // Continue with product deletion even if image deletion fails
+          }
+        }
+      }
+    }
+
+    // Delete the product
+    await Product.findByIdAndDelete(id);
+
+    res.json({ message: 'Product deleted successfully', productId: id });
+  } catch (err) {
+    console.error('Delete product error:', err);
+    res.status(500).json({ error: 'Failed to delete product' });
+  }
+});
+
+/**
+ * GET /api/admin/refunds/count
+ * Get count of refund requests (lightweight for polling)
+ */
+router.get('/refunds/count', async (req, res) => {
+  try {
+    const { status = 'requested' } = req.query;
+
+    const count = await Order.countDocuments({
+      refundStatus: status
+    });
+
+    res.json({ count });
+  } catch (err) {
+    console.error('Admin refund count error:', err);
+    res.status(500).json({ error: 'Failed to fetch refund count' });
+  }
+});
+
+/**
+ * GET /api/admin/orders/count
+ * Lightweight endpoint for polling order counts
+ */
+router.get('/orders/count', async (req, res) => {
+  try {
+    const { status } = req.query;
+
+    const filter = {};
+    if (status) {
+      filter.status = status;
+    }
+
+    const count = await Order.countDocuments(filter);
+
+    res.json({ count });
+  } catch (err) {
+    console.error('Get order count error:', err);
+    res.status(500).json({ error: 'Failed to get order count' });
+  }
+});
 
 /**
  * GET /api/admin/refunds
@@ -513,9 +591,9 @@ router.post('/orders/:id/ship', async (req, res) => {
     }
 
     // 3. Business validations
-    if (order.status !== 'confirmed') {
+    if (order.status !== 'processing') {
       return res.status(400).json({
-        error: 'Only confirmed orders can be shipped',
+        error: 'Only processing orders can be shipped',
         currentStatus: order.status
       });
     }
@@ -533,8 +611,27 @@ router.post('/orders/:id/ship', async (req, res) => {
       });
     }
 
-    // 4. Create shipment via Shiprocket
-    const shiprocketResponse = await createShipmentFromOrder(order);
+    // 4. Create shipment via Shiprocket (or mock in development)
+    let shiprocketResponse;
+
+    if (process.env.SHIPROCKET_MOCK_MODE === 'true') {
+      // Mock mode for testing without Shiprocket account
+      console.log('🧪 MOCK MODE: Simulating Shiprocket shipment creation');
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API delay
+
+      shiprocketResponse = {
+        shipment_id: Math.floor(Math.random() * 100000),
+        order_id: Math.floor(Math.random() * 100000),
+        awb_code: `MOCK${Date.now()}`,
+        courier_name: 'MockCourier (Test)',
+        courier_id: 1
+      };
+
+      console.log('🧪 Mock Shiprocket Response:', shiprocketResponse);
+    } else {
+      // Real Shiprocket API call
+      shiprocketResponse = await createShipmentFromOrder(order);
+    }
 
     // Defensive checks (Shiprocket can be weird)
     if (!shiprocketResponse?.shipment_id || !shiprocketResponse?.awb_code) {
@@ -559,6 +656,25 @@ router.post('/orders/:id/ship', async (req, res) => {
     order.status = 'shipped';
 
     await order.save();
+
+    // Send shipping notification email
+    try {
+      console.log('Attempting to send shipping email for order:', order.orderNumber);
+      console.log('User ID:', order.userId);
+
+      const user = await User.findById(order.userId);
+      console.log('User found:', user ? user.email : 'No user found');
+
+      if (user) {
+        await sendShippingNotificationEmail(order, user);
+        console.log('✅ Shipping email sent successfully to:', user.email);
+      } else {
+        console.error('❌ User not found for userId:', order.userId);
+      }
+    } catch (emailError) {
+      console.error('❌ Email sending failed (non-critical):', emailError);
+      console.error('Error details:', emailError.message);
+    }
 
     res.json({
       success: true,
@@ -692,15 +808,21 @@ const initiatePayURefund = async ({ mihpayid, amountRupees }) => {
   const command = 'cancel_refund_transaction';
 
   // Refund Hash Sequence: key|command|var1|salt
+  // var1 = mihpayid (PayU Transaction ID)
+  // var2 and var3 are NOT in the hash!
   const hashString = `${process.env.PAYU_MERCHANT_KEY}|${command}|${mihpayid}|${process.env.PAYU_MERCHANT_SALT}`;
   const hash = crypto.createHash('sha512').update(hashString).digest('hex');
+
+  // Generate unique token ID for this refund (max 23 chars)
+  const tokenId = `REF${Date.now()}`.substring(0, 23);
 
   // PayU Web Services REQUIRES form-urlencoded, not JSON
   const params = new URLSearchParams();
   params.append('key', process.env.PAYU_MERCHANT_KEY);
   params.append('command', command);
-  params.append('var1', mihpayid);    // The PayU Payment ID
-  params.append('var2', amountRupees); // The amount to refund
+  params.append('var1', mihpayid);      // PayU Transaction ID
+  params.append('var2', tokenId);       // Unique Token ID for refund
+  params.append('var3', amountRupees);  // Amount to refund
   params.append('hash', hash);
 
   const url = process.env.NODE_ENV === 'production'
@@ -770,17 +892,12 @@ router.post('/refunds/:orderId/approve', async (req, res) => {
     // 3. Trigger actual PayU API call
     const amountRupees = (order.amount / 100).toFixed(2);
 
-    if (order.refundStatus !== 'requested') {
-      return res.status(409).json({ error: 'Refund already processed' });
-    }
-    order.refundStatus = 'processing';
-    await order.save();
-
     const refundResult = await initiatePayURefund({ mihpayid, amountRupees });
 
     // 4. Handle PayU Response
     if (refundResult.status === 1) {
-      order.refundStatus = 'refunded'; // Update to final state
+      // PayU success - update order to refunded
+      order.refundStatus = 'refunded';
       order.payment.status = 'refunded';
       order.payment.refundAmount = order.amount;
       order.payment.refundedAt = new Date();
@@ -789,10 +906,21 @@ router.post('/refunds/:orderId/approve', async (req, res) => {
       order.payment.attempts.push({
         txnid: `REFUND_${order.orderNumber}`,
         status: 'success',
-        rawResponse: refundResult
+        rawResponse: refundResult,
+        amountPaise: order.amount,
       });
 
       await order.save();
+
+      // Send refund approval email
+      try {
+        const user = await User.findById(order.userId);
+        if (user) {
+          await sendRefundApprovalEmail(order, user);
+        }
+      } catch (emailError) {
+        console.error('Email sending failed (non-critical):', emailError);
+      }
 
       res.json({
         success: true,
@@ -801,7 +929,7 @@ router.post('/refunds/:orderId/approve', async (req, res) => {
         payuData: refundResult
       });
     } else {
-      // If PayU rejects it (e.g. insufficient merchant balance)
+      // PayU rejected - keep status as 'requested', don't save
       return res.status(400).json({
         error: 'PayU Gateway rejected refund',
         details: refundResult.msg
@@ -847,6 +975,16 @@ router.post('/refunds/:orderId/reject', async (req, res) => {
     order.refundReason = reason || 'Rejected by admin';
 
     await order.save();
+
+    // Send refund rejection email
+    try {
+      const user = await User.findById(order.userId);
+      if (user) {
+        await sendRefundRejectionEmail(order, user, reason);
+      }
+    } catch (emailError) {
+      console.error('Email sending failed (non-critical):', emailError);
+    }
 
     res.json({
       success: true,
@@ -1000,6 +1138,213 @@ router.get('/dashboard/stats', async (req, res) => {
   }
 });
 
+
+/**
+ * RETURN MANAGEMENT ROUTES
+ */
+
+// GET /api/admin/returns/count - Get count of return requests
+router.get('/returns/count', async (req, res) => {
+  try {
+    const { status = 'requested' } = req.query;
+
+    const count = await Order.countDocuments({
+      'returnRequest.status': status
+    });
+
+    res.json({ count });
+  } catch (err) {
+    console.error('Get return count error:', err);
+    res.status(500).json({ error: 'Failed to get return count' });
+  }
+});
+
+// GET /api/admin/returns - List all return requests
+router.get('/returns', async (req, res) => {
+  try {
+    const { status } = req.query;
+
+    const query = {
+      'returnRequest.requested': true
+    };
+
+    // Optional status filter
+    if (status) {
+      query['returnRequest.status'] = status;
+    }
+
+    const returns = await Order.find(query)
+      .populate('userId', 'name email')
+      .sort({ 'returnRequest.requestedAt': -1 })
+      .select('orderNumber returnRequest shippingAddress items amount status userId createdAt logistics')
+      .lean();
+
+    res.json({
+      count: returns.length,
+      returns
+    });
+  } catch (err) {
+    console.error('Admin returns list error:', err);
+    res.status(500).json({ error: 'Failed to fetch return requests' });
+  }
+});
+
+// PUT /api/admin/returns/:orderId/approve - Approve return and schedule Shiprocket pickup
+router.put('/returns/:orderId/approve', async (req, res) => {
+  try {
+    const { adminNotes } = req.body;
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (order.returnRequest?.status !== 'requested') {
+      return res.status(400).json({
+        error: 'Return request not in requested state',
+        currentStatus: order.returnRequest?.status
+      });
+    }
+
+    // Update return request
+    order.returnRequest.status = 'approved';
+    order.returnRequest.adminNotes = adminNotes || 'Approved by admin';
+    order.returnRequest.processedAt = new Date();
+    order.returnRequest.processedBy = req.user._id;
+
+    // Try to create Shiprocket return pickup
+    let shiprocketResponse = null;
+
+    if (process.env.SHIPROCKET_MOCK_MODE === 'true') {
+      console.log('🧪 MOCK MODE: Simulating Shiprocket return pickup creation');
+      shiprocketResponse = {
+        shipment_id: Math.floor(Math.random() * 100000),
+        order_id: Math.floor(Math.random() * 100000),
+        awb_code: `RET${Date.now()}`,
+        courier_name: 'MockCourier (Return Test)'
+      };
+    } else {
+      try {
+        shiprocketResponse = await createReturnPickup(order);
+      } catch (shipErr) {
+        console.error('Shiprocket return pickup error:', shipErr);
+        // Continue without failing - admin can manually arrange pickup
+      }
+    }
+
+    if (shiprocketResponse?.shipment_id) {
+      order.returnRequest.status = 'pickup_scheduled';
+      order.returnRequest.returnShipmentId = shiprocketResponse.shipment_id?.toString();
+      order.returnRequest.returnOrderId = shiprocketResponse.order_id?.toString();
+      order.returnRequest.returnAwb = shiprocketResponse.awb_code;
+      order.returnRequest.returnCourier = shiprocketResponse.courier_name;
+    }
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: shiprocketResponse?.shipment_id
+        ? 'Return approved and pickup scheduled'
+        : 'Return approved (pickup to be arranged manually)',
+      order,
+      shiprocketResponse
+    });
+
+  } catch (err) {
+    console.error('Approve return error:', err);
+    res.status(500).json({ error: 'Failed to approve return request' });
+  }
+});
+
+// PUT /api/admin/returns/:orderId/reject - Reject return request
+router.put('/returns/:orderId/reject', async (req, res) => {
+  try {
+    const { adminNotes } = req.body;
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (order.returnRequest?.status !== 'requested') {
+      return res.status(400).json({
+        error: 'Return request not in requested state',
+        currentStatus: order.returnRequest?.status
+      });
+    }
+
+    // Update return request 
+    order.returnRequest.status = 'rejected';
+    order.returnRequest.adminNotes = adminNotes || 'Rejected by admin';
+    order.returnRequest.processedAt = new Date();
+    order.returnRequest.processedBy = req.user._id;
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Return request rejected',
+      order
+    });
+
+  } catch (err) {
+    console.error('Reject return error:', err);
+    res.status(500).json({ error: 'Failed to reject return request' });
+  }
+});
+
+// PUT /api/admin/returns/:orderId/complete - Mark return as complete and process refund
+router.put('/returns/:orderId/complete', async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const validStatuses = ['approved', 'pickup_scheduled', 'picked_up'];
+    if (!validStatuses.includes(order.returnRequest?.status)) {
+      return res.status(400).json({
+        error: 'Return must be approved before completion',
+        currentStatus: order.returnRequest?.status
+      });
+    }
+
+    // Mark return as complete
+    order.returnRequest.status = 'completed';
+    order.returnRequest.processedAt = new Date();
+
+    // Trigger refund request
+    order.refundRequested = true;
+    order.refundRequestedAt = new Date();
+    order.refundReason = `Return completed - ${order.returnRequest.reason}`;
+    order.refundStatus = 'requested';
+
+    // Restore inventory
+    if (!order.inventoryRestored) {
+      for (const item of order.items) {
+        await Product.findByIdAndUpdate(
+          item.productId,
+          { $inc: { inventory: item.qty } }
+        );
+      }
+      order.inventoryRestored = true;
+    }
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Return completed. Refund request created.',
+      order
+    });
+
+  } catch (err) {
+    console.error('Complete return error:', err);
+    res.status(500).json({ error: 'Failed to complete return' });
+  }
+});
 
 
 export default router;

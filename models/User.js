@@ -9,13 +9,13 @@ const UserSchema = new mongoose.Schema({
     maxlength: 50
   },
   email: { type: String, unique: true, required: true, lowercase: true, trim: true, match: [/^\S+@\S+\.\S+$/, 'Invalid email address'], },
-  passwordHash: { type: String, required: true, select : false},
+  passwordHash: { type: String, required: true, select: false },
   role: { type: String, enum: ['user', 'admin'], default: 'user' }
 
 }, { timestamps: true });
 
 
-UserSchema.pre('save', async function(next) {
+UserSchema.pre('save', async function (next) {
   // Only hash if password is NEW or MODIFIED, and not already hashed
   if (!this.isModified('passwordHash') || this.passwordHash.startsWith('$2')) {
     return next();
@@ -26,13 +26,13 @@ UserSchema.pre('save', async function(next) {
 
 
 // Method to compare password with hash
-UserSchema.methods.comparePassword = async function(candidatePassword) {
+UserSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.passwordHash);
 };
 
 
 // Override toJSON to exclude sensitive fields from API responses
-UserSchema.methods.toJSON = function() {
+UserSchema.methods.toJSON = function () {
   const user = this.toObject();
   delete user.passwordHash;
   delete user.__v;
