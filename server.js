@@ -116,9 +116,8 @@ app.use(express.static('public'));
 
 // If you sit behind a reverse proxy in dev (less common) you might need:
 // app.set('trust proxy', true);
-if (process.env.NODE_ENV === 'production') {
-  app.set('trust proxy', true);
-}
+// Always enable trust proxy - needed for Render and other PaaS deployments
+app.set('trust proxy', 1);
 
 
 app.use("/api/webhooks", razorpayWebhook);
