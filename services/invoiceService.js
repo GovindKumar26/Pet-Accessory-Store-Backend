@@ -226,11 +226,11 @@ export const generateInvoicePDF = async (order, taxConfig) => {
             const halfGstRate = gstRate / 2;
 
             order.items.forEach((item, index) => {
-                const unitPrice = (item.price / 100);
-                const itemTotal = unitPrice * item.qty;
-                const taxableAmount = itemTotal / (1 + gstRate / 100); // Extract base from tax-inclusive
-                const gstAmount = itemTotal - taxableAmount;
+                const unitPrice = (item.price / 100);  // Tax-exclusive price
+                const itemSubtotal = unitPrice * item.qty;
+                const gstAmount = itemSubtotal * (gstRate / 100);  // Tax calculated ON TOP
                 const halfGstAmount = gstAmount / 2;
+                const itemTotal = itemSubtotal + gstAmount;  // Total with tax
 
                 xPos = 50;
                 doc.font('Helvetica').fontSize(8);
