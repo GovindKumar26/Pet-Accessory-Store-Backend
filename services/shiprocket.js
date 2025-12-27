@@ -66,10 +66,20 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
 
   // Log the pickup location being used
   const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION || 'Primary';
-  console.log('📍 Shiprocket Pickup Location:', pickupLocation);
+  console.log('📍 Shiprocket Pickup Location (from env):', pickupLocation);
   console.log('📍 SHIPROCKET_PICKUP_LOCATION env var:', process.env.SHIPROCKET_PICKUP_LOCATION);
 
-  // Format order date as "YYYY-MM-DD HH:mm" (IST)
+  // Fetch and log all pickup locations from Shiprocket dashboard
+  try {
+    const dashboardLocations = await getPickupLocations();
+    console.log('📍 Shiprocket Dashboard Pickup Locations:', dashboardLocations.map(loc => ({
+      name: loc.pickup_location,
+      id: loc.id,
+      city: loc.city
+    })));
+  } catch (err) {
+    console.log('⚠️ Could not fetch dashboard pickup locations:', err.message);
+  }
   const orderDate = new Date(order.createdAt);
   const formattedDate = `${orderDate.getFullYear()}-${String(orderDate.getMonth() + 1).padStart(2, '0')}-${String(orderDate.getDate()).padStart(2, '0')} ${String(orderDate.getHours()).padStart(2, '0')}:${String(orderDate.getMinutes()).padStart(2, '0')}`;
 
