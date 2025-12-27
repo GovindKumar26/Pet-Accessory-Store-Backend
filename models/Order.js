@@ -174,6 +174,10 @@ const OrderSchema = new mongoose.Schema({
     returnCourier: String
   },
 
+  // Invoice
+  invoiceNumber: { type: String, unique: true, sparse: true },
+  invoiceGeneratedAt: Date,
+
   orderNumber: { type: String, unique: true }
 }, { timestamps: true });
 

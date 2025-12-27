@@ -4,6 +4,7 @@ import User from '../models/User.js';
 import Product from '../models/Product.js';
 import { restoreInventory } from '../utils/inventory.js';
 import { sendOrderCancellationEmail } from '../services/emailService.js';
+import { generateInvoicePDF, generateInvoiceNumber } from '../services/invoiceService.js';
 import Discount from '../models/Discount.js';
 import TaxConfig from '../models/TaxConfig.js';
 import { authenticate } from '../middleware/auth.js';
@@ -428,6 +429,59 @@ router.post('/:id/return', async (req, res) => {
     }
 
     res.status(500).json({ error: 'Failed to submit return request. Please try again.' });
+  }
+});
+
+
+/**
+ * GET /api/orders/:id/invoice
+ * Download invoice PDF for a paid order (customer)
+ */
+router.get('/:id/invoice', async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Authorization: User can only download their own invoices
+    if (order.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Access denied. You can only download invoices for your own orders.' });
+    }
+
+    // Only confirmed/paid orders have invoices
+    if (order.payment.status !== 'paid') {
+      return res.status(400).json({ error: 'Invoice is only available for paid orders' });
+    }
+
+    // Generate invoice number if not exists
+    if (!order.invoiceNumber) {
+      order.invoiceNumber = await generateInvoiceNumber(Order);
+      order.invoiceGeneratedAt = new Date();
+      await order.save();
+    }
+
+    // Get tax config for GST calculations
+    const taxConfig = await TaxConfig.findOne({ isActive: true });
+
+    // Generate PDF
+    const pdfBuffer = await generateInvoicePDF(order, taxConfig);
+
+    // Set headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=Invoice-${order.invoiceNumber}.pdf`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('Invoice download error:', err);
+
+    if (err.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid order ID format' });
+    }
+
+    res.status(500).json({ error: 'Failed to generate invoice. Please try again.' });
   }
 });
 

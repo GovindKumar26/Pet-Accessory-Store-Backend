@@ -10,6 +10,7 @@ import Order from '../models/Order.js';
 import User from '../models/User.js';
 import { createShipmentFromOrder, createReturnPickup } from '../services/shiprocket.js';
 import { sendShippingNotificationEmail, sendRefundApprovalEmail, sendRefundRejectionEmail } from '../services/emailService.js';
+import { generateInvoicePDF, generateInvoiceNumber } from '../services/invoiceService.js';
 
 
 // Admin API expects price in RUPEES (decimal)
@@ -696,6 +697,54 @@ router.post('/orders/:id/ship', async (req, res) => {
   }
 });
 
+
+/**
+ * GET /api/admin/orders/:id/invoice
+ * Download invoice PDF for a paid order (admin)
+ */
+router.get('/orders/:id/invoice', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid order ID format' });
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Only paid orders have invoices
+    if (order.payment.status !== 'paid') {
+      return res.status(400).json({ error: 'Invoice is only available for paid orders' });
+    }
+
+    // Generate invoice number if not exists
+    if (!order.invoiceNumber) {
+      order.invoiceNumber = await generateInvoiceNumber(Order);
+      order.invoiceGeneratedAt = new Date();
+      await order.save();
+    }
+
+    // Get tax config for GST calculations
+    const taxConfig = await TaxConfig.findOne({ isActive: true });
+
+    // Generate PDF
+    const pdfBuffer = await generateInvoicePDF(order, taxConfig);
+
+    // Set headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=Invoice-${order.invoiceNumber}.pdf`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('Admin invoice download error:', err);
+    res.status(500).json({ error: 'Failed to generate invoice. Please try again.' });
+  }
+});
 
 
 router.patch('/orders/:id/status', async (req, res) => {
