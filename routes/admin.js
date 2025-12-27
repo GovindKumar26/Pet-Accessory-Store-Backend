@@ -584,8 +584,8 @@ router.post('/orders/:id/ship', async (req, res) => {
       return res.status(400).json({ error: 'Invalid order ID format' });
     }
 
-    // 2. Fetch order
-    const order = await Order.findById(id);
+    // 2. Fetch order with user data
+    const order = await Order.findById(id).populate('userId', 'email');
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
@@ -629,8 +629,9 @@ router.post('/orders/:id/ship', async (req, res) => {
 
       console.log('🧪 Mock Shiprocket Response:', shiprocketResponse);
     } else {
-      // Real Shiprocket API call
-      shiprocketResponse = await createShipmentFromOrder(order);
+      // Real Shiprocket API call - pass user email for billing
+      const userEmail = order.userId?.email || 'noreply@thevelvettails.com';
+      shiprocketResponse = await createShipmentFromOrder(order, userEmail);
     }
 
     // Defensive checks (Shiprocket can be weird)
