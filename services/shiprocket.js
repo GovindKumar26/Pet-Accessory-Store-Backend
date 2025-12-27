@@ -64,6 +64,11 @@ const getPickupLocationByName = async (locationName) => {
 export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevelvettails.com') => {
   const token = await getShiprocketToken();
 
+  // Log the pickup location being used
+  const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION || 'Primary';
+  console.log('📍 Shiprocket Pickup Location:', pickupLocation);
+  console.log('📍 SHIPROCKET_PICKUP_LOCATION env var:', process.env.SHIPROCKET_PICKUP_LOCATION);
+
   // Format order date as "YYYY-MM-DD HH:mm" (IST)
   const orderDate = new Date(order.createdAt);
   const formattedDate = `${orderDate.getFullYear()}-${String(orderDate.getMonth() + 1).padStart(2, '0')}-${String(orderDate.getDate()).padStart(2, '0')} ${String(orderDate.getHours()).padStart(2, '0')}:${String(orderDate.getMinutes()).padStart(2, '0')}`;
@@ -71,7 +76,7 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
   const payload = {
     order_id: order.orderNumber,
     order_date: formattedDate,
-    pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || 'Primary',
+    pickup_location: pickupLocation,
 
     // Split name into first and last (Shiprocket requires both)
     billing_customer_name: order.shippingAddress.name.split(' ')[0] || order.shippingAddress.name,
@@ -93,7 +98,8 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
       selling_price: Number((item.price / 100).toFixed(2))
     })),
 
-    payment_method: order.payment.status === 'paid' ? 'PREPAID' : 'COD',
+    // Shiprocket API expects "Prepaid" or "COD" (not all-caps "PREPAID")
+    payment_method: order.payment.status === 'paid' ? 'Prepaid' : 'COD',
     sub_total: Number((order.subtotal / 100).toFixed(2)),
     length: 10,
     breadth: 10,
@@ -110,14 +116,42 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
       {
         headers: {
           Authorization: `Bearer ${token}`
-        }
+        },
+        timeout: 30000 // 30 second timeout
       }
     );
 
     return response.data;
   } catch (error) {
     // Log detailed error from Shiprocket
-    console.error('❌ Shiprocket Error:', JSON.stringify(error.response?.data, null, 2));
+    console.error('❌ Shiprocket Error:', error.response?.status, JSON.stringify(error.response?.data, null, 2));
+
+    // If 5xx error (server error), try once more with fresh token
+    if (error.response?.status >= 500 && error.response?.status < 600) {
+      console.log('🔄 Retrying with fresh token...');
+      cachedToken = null;  // Force token refresh
+      tokenExpiry = null;
+
+      const freshToken = await getShiprocketToken();
+
+      try {
+        const retryResponse = await axios.post(
+          `${BASE_URL}/orders/create/adhoc`,
+          payload,
+          {
+            headers: {
+              Authorization: `Bearer ${freshToken}`
+            },
+            timeout: 30000
+          }
+        );
+        return retryResponse.data;
+      } catch (retryError) {
+        console.error('❌ Shiprocket Retry Error:', retryError.response?.status, JSON.stringify(retryError.response?.data, null, 2));
+        throw retryError;
+      }
+    }
+
     throw error;
   }
 };
