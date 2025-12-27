@@ -131,7 +131,47 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
       }
     );
 
-    return response.data;
+    console.log('✅ Shiprocket Order Response:', JSON.stringify(response.data, null, 2));
+
+    const orderData = response.data;
+
+    // If AWB wasn't assigned automatically, assign courier manually
+    if (orderData.shipment_id && !orderData.awb_code) {
+      console.log('📦 AWB not assigned. Requesting courier assignment...');
+
+      try {
+        const awbResponse = await axios.post(
+          `${BASE_URL}/courier/assign/awb`,
+          { shipment_id: orderData.shipment_id },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            },
+            timeout: 30000
+          }
+        );
+
+        console.log('✅ Courier Assignment Response:', JSON.stringify(awbResponse.data, null, 2));
+
+        // Merge the AWB data into the response
+        return {
+          ...orderData,
+          awb_code: awbResponse.data.response?.data?.awb_code || awbResponse.data.awb_code,
+          courier_name: awbResponse.data.response?.data?.courier_name || awbResponse.data.courier_name,
+          courier_company_id: awbResponse.data.response?.data?.courier_company_id
+        };
+      } catch (awbError) {
+        console.error('⚠️ Courier assignment failed:', awbError.response?.data || awbError.message);
+        // Return the order data anyway - AWB can be assigned later from Shiprocket dashboard
+        return {
+          ...orderData,
+          awb_code: null,
+          courier_name: 'Pending Assignment'
+        };
+      }
+    }
+
+    return orderData;
   } catch (error) {
     // Log detailed error from Shiprocket
     console.error('❌ Shiprocket Error:', error.response?.status, JSON.stringify(error.response?.data, null, 2));
@@ -155,6 +195,7 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
             timeout: 30000
           }
         );
+        console.log('✅ Shiprocket Retry Response:', JSON.stringify(retryResponse.data, null, 2));
         return retryResponse.data;
       } catch (retryError) {
         console.error('❌ Shiprocket Retry Error:', retryError.response?.status, JSON.stringify(retryError.response?.data, null, 2));

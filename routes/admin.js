@@ -634,26 +634,29 @@ router.post('/orders/:id/ship', async (req, res) => {
       shiprocketResponse = await createShipmentFromOrder(order, userEmail);
     }
 
-    // Defensive checks (Shiprocket can be weird)
-    if (!shiprocketResponse?.shipment_id || !shiprocketResponse?.awb_code) {
+    // Defensive checks - only shipment_id is required, AWB may be pending
+    if (!shiprocketResponse?.shipment_id) {
       return res.status(502).json({
-        error: 'Invalid response from Shiprocket',
+        error: 'Invalid response from Shiprocket - missing shipment_id',
         shiprocketResponse
       });
     }
+
+    // Determine status based on whether AWB was assigned
+    const logisticsStatus = shiprocketResponse.awb_code ? 'in_transit' : 'pending_courier';
 
     // 5. Save logistics info
     order.logistics = {
       provider: 'shiprocket',
       shipmentId: shiprocketResponse.shipment_id,
       orderId: shiprocketResponse.order_id,
-      awb: shiprocketResponse.awb_code,
-      courierName: shiprocketResponse.courier_name,
-      status: 'in_transit',
+      awb: shiprocketResponse.awb_code || null,
+      courierName: shiprocketResponse.courier_name || 'Pending',
+      status: logisticsStatus,
       shippedAt: new Date()
     };
 
-    // 6. Update order status
+    // 6. Update order status - shipped even if AWB pending (can be assigned from Shiprocket dashboard)
     order.status = 'shipped';
 
     await order.save();
