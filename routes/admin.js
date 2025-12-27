@@ -643,7 +643,7 @@ router.post('/orders/:id/ship', async (req, res) => {
     }
 
     // Determine status based on whether AWB was assigned
-    const logisticsStatus = shiprocketResponse.awb_code ? 'in_transit' : 'pending_courier';
+    const logisticsStatus = shiprocketResponse.awb_code ? 'in_transit' : 'created';
 
     // 5. Save logistics info
     order.logistics = {
