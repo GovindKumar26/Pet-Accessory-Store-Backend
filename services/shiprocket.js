@@ -90,7 +90,7 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
 
     // Split name into first and last (Shiprocket requires both)
     billing_customer_name: order.shippingAddress.name.split(' ')[0] || order.shippingAddress.name,
-    billing_last_name: order.shippingAddress.name.split(' ').slice(1).join(' ') || '.',
+    billing_last_name: order.shippingAddress.name.split(' ').slice(1).join(' ') || 'NA',
     billing_phone: order.shippingAddress.phone,
     billing_address: order.shippingAddress.street,
     billing_city: order.shippingAddress.city,
