@@ -140,10 +140,16 @@ export const generateInvoicePDF = async (order, taxConfig) => {
             const lightGray = '#f5f5f5';
 
             // ===== HEADER =====
-            // Logo placeholder (circle with text)
-            doc.circle(80, 70, 30).fill(purple);
-            doc.fillColor('white').fontSize(8).text('The', 65, 58);
-            doc.fontSize(7).text('Velvet Tails', 58, 68);
+            // Logo - use actual PNG logo
+            const logoPath = path.join(process.cwd(), 'public', '215344079_padded_logo.png');
+            if (fs.existsSync(logoPath)) {
+                doc.image(logoPath, 50, 35, { width: 70 });
+            } else {
+                // Fallback: text-based logo if file not found
+                doc.circle(80, 70, 30).fill(purple);
+                doc.fillColor('white').fontSize(8).text('The', 65, 58);
+                doc.fontSize(7).text('Velvet Tails', 58, 68);
+            }
             doc.fillColor('black');
 
             // Company details
@@ -198,8 +204,8 @@ export const generateInvoicePDF = async (order, taxConfig) => {
             // ===== ITEMS TABLE =====
             const tableY = customerY + 80;
             const colWidths = gstType === 'intra'
-                ? [25, 150, 60, 45, 50, 35, 45, 35, 45, 60]  // CGST + SGST
-                : [25, 150, 60, 45, 50, 35, 60, 70];          // IGST
+                ? [25, 180, 50, 55, 40, 50, 40, 50, 60]  // CGST + SGST (no HSN)
+                : [25, 200, 50, 60, 45, 60, 70];          // IGST (no HSN)
 
             // Table header
             doc.rect(40, tableY, pageWidth, 25).fill(lightGray);
@@ -207,8 +213,8 @@ export const generateInvoicePDF = async (order, taxConfig) => {
 
             let xPos = 50;
             const headers = gstType === 'intra'
-                ? ['#', 'Description', 'HSN/SAC', 'Qty', 'Rate', 'CGST %', 'Amt', 'SGST %', 'Amt', 'Amount']
-                : ['#', 'Description', 'HSN/SAC', 'Qty', 'Rate', 'IGST %', 'Amt', 'Amount'];
+                ? ['#', 'Description', 'Qty', 'Rate', 'CGST %', 'Amt', 'SGST %', 'Amt', 'Amount']
+                : ['#', 'Description', 'Qty', 'Rate', 'IGST %', 'Amt', 'Amount'];
 
             headers.forEach((header, i) => {
                 doc.text(header, xPos, tableY + 8, { width: colWidths[i], align: i === 0 ? 'left' : 'center' });
@@ -233,7 +239,6 @@ export const generateInvoicePDF = async (order, taxConfig) => {
                     ? [
                         String(index + 1),
                         item.title || 'Product',
-                        item.hsn || '42010000',
                         `${item.qty} pcs`,
                         unitPrice.toFixed(2),
                         `${halfGstRate}%`,
@@ -245,7 +250,6 @@ export const generateInvoicePDF = async (order, taxConfig) => {
                     : [
                         String(index + 1),
                         item.title || 'Product',
-                        item.hsn || '42010000',
                         `${item.qty} pcs`,
                         unitPrice.toFixed(2),
                         `${gstRate}%`,
@@ -279,7 +283,6 @@ export const generateInvoicePDF = async (order, taxConfig) => {
 
             // Sub Total
             doc.text('Sub Total', totalsX, totalsY);
-            doc.text('(Tax Inclusive)', totalsX, totalsY + 10, { fontSize: 7 });
             doc.text(subtotal.toFixed(2), totalsX + 120, totalsY, { align: 'right', width: 80 });
 
             // Discount (if any)
