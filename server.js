@@ -25,6 +25,7 @@ import paymentRoutes from './routes/payments.js';
 import adminRoutes from './routes/admin.js';
 import discountRoutes from './routes/discounts.js';
 import razorpayWebhook from "./routes/razorpayWebhook.js";
+import shiprocketWebhook from './routes/shiprocketWebhook.js';
 // import './cron.js'
 //import the cron job later 
 //import './jobs/shiprocketTrackingCron.js';
@@ -121,6 +122,7 @@ app.set('trust proxy', 1);
 
 
 app.use("/api/webhooks", razorpayWebhook);
+app.use('/api/shiprocket', shiprocketWebhook);
 // Apply rate limiters
 app.use(globalLimiter);  // Global rate limit for all routes
 
