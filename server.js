@@ -3,10 +3,6 @@ import express from "express";
 import 'dotenv/config';
 
 
-// Debug: Check if Razorpay env vars are loaded
-// console.log('Environment Check:');
-// console.log('RAZORPAY_KEY_ID:', process.env.RAZORPAY_KEY_ID ? 'LOADED' : 'NOT LOADED');
-//console.log('RAZORPAY_KEY_SECRET:', process.env.RAZORPAY_KEY_SECRET ? 'LOADED' : 'NOT LOADED');
 
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -24,64 +20,14 @@ import orderRoutes from './routes/orders.js';
 import paymentRoutes from './routes/payments.js';
 import adminRoutes from './routes/admin.js';
 import discountRoutes from './routes/discounts.js';
-import razorpayWebhook from "./routes/razorpayWebhook.js";
-import shiprocketWebhook from './routes/shiprocketWebhook.js';
-// import './cron.js'
-//import the cron job later 
-//import './jobs/shiprocketTrackingCron.js';
+// Shiprocket tracking via cron job (jobs/shiprocketTrackingCron.js)
+import './jobs/shiprocketTrackingCron.js';
+import './cron.js';
 
 
 
 const app = express();
 let server;
-
-
-// app.use(
-//   helmet({
-//     contentSecurityPolicy: {
-//       useDefaults: true,
-//       directives: {
-//         "script-src": [
-//           "'self'",
-//           "https://checkout.razorpay.com"
-//         ],
-
-//         "script-src-elem": [
-//           "'self'",
-//           "https://checkout.razorpay.com"
-//         ],
-
-//         "frame-src": [
-//           "'self'",
-//           "https://checkout.razorpay.com",
-//           "https://api.razorpay.com"
-//         ],
-
-//         "connect-src": [
-//           "'self'",
-//           "https://api.razorpay.com",
-//           "https://lumberjack.razorpay.com",
-//           "https://browser.sentry-cdn.com"
-//         ],
-
-//         "img-src": [
-//           "'self'",
-//           "data:",
-//           "https://checkout.razorpay.com"
-//         ]
-//       }
-//     }
-//   })
-// );
-
-
-
-
-app.use(
-  "/api/webhooks/razorpay",
-  express.raw({ type: "application/json" })
-);
-
 
 
 app.use(express.json({ limit: '10mb' }));
@@ -96,16 +42,17 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 
-// IMPORTANT: default FRONT to your frontend origin (you said http://localhost:3000)
+// CORS configuration
 const FRONT = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-// CORS configuration - allow both common Vite ports
 const corsOptions = {
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    FRONT
-  ],
+  origin: process.env.NODE_ENV === 'production'
+    ? FRONT  // Production: only allow the exact frontend URL from env
+    : [      // Development: allow multiple localhost ports for flexibility
+      'http://localhost:5173',
+      'http://localhost:5174',
+      FRONT
+    ],
   credentials: true
 };
 
@@ -121,8 +68,7 @@ app.use(express.static('public'));
 app.set('trust proxy', 1);
 
 
-app.use("/api/webhooks", razorpayWebhook);
-app.use('/api/shiprocket', shiprocketWebhook);
+
 // Apply rate limiters
 app.use(globalLimiter);  // Global rate limit for all routes
 
