@@ -20,7 +20,17 @@ const DiscountSchema = new mongoose.Schema({
   usedCount: { type: Number, default: 0 },
   description: { type: String, trim: true },  // "New year sale - 20% off"
   minOrderValue: { type: Number, min: 0 },  // Minimum order value to apply discount
-  maxDiscountAmount: { type: Number, min: 0 }  // Max discount cap (for percentage type)
+  maxDiscountAmount: { type: Number, min: 0 },  // Max discount cap (for percentage type)
+  firstTimeOnly: {
+    type: Boolean,
+    default: false,
+    description: 'If true, discount only applies to users with no previous orders'
+  },
+  usedBy: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    description: 'Array of user IDs who have used this discount'
+  }]
 }, { timestamps: true });
 
 // Add validation in pre-save
@@ -83,14 +93,14 @@ DiscountSchema.methods.calculateDiscount = function (orderTotal) {
   } else {
     // Fixed discount already in paise
     discountPaise = this.value;
-  } 
+  }
 
   // Apply max discount cap (useful for percentage discounts)
   if (this.maxDiscountAmount && discountPaise > this.maxDiscountAmount) {
     discountPaise = this.maxDiscountAmount;
   }
 
- return Math.min(discountPaise, orderTotal);
+  return Math.min(discountPaise, orderTotal);
 };
 
 // Indexes for performance

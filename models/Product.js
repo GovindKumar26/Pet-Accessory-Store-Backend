@@ -26,7 +26,19 @@ const ProductSchema = new mongoose.Schema({
   },
   category: { type: String, required: true },
   tags: [String],
-  inventory: { type: Number, required: true, min: 0, default: 0 }
+  inventory: { type: Number, required: true, min: 0, default: 0 },
+
+  // Product attributes
+  size: { type: String, trim: true },  // e.g., "Small", "Medium", "Large"
+  color: { type: String, trim: true }, // e.g., "Red", "Blue", "Black"
+
+  // Physical dimensions for Shiprocket shipping
+  dimensions: {
+    length: { type: Number, default: 10, min: 0 },  // cm
+    breadth: { type: Number, default: 10, min: 0 }, // cm (width)
+    height: { type: Number, default: 10, min: 0 },  // cm
+    weight: { type: Number, default: 0.5, min: 0 }  // kg
+  }
 }, { timestamps: true });
 
 ProductSchema.pre('save', function (next) {

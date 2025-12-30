@@ -94,7 +94,13 @@ router.post('/', async (req, res) => {
         productId: product._id,
         title: product.title,
         price: product.price,  // Server's price
-        qty: item.quantity     // Model uses 'qty' not 'quantity'
+        qty: item.quantity,    // Model uses 'qty' not 'quantity'
+        dimensions: product.dimensions || {
+          length: 10,
+          breadth: 10,
+          height: 10,
+          weight: 0.5
+        }
       });
     }
 
@@ -140,11 +146,38 @@ router.post('/', async (req, res) => {
         });
       }
 
+      // Check if discount is for first-time users only
+      if (discountDoc.firstTimeOnly) {
+        const completedOrders = await Order.countDocuments({
+          userId: req.user._id,
+          status: { $in: ['confirmed', 'shipped', 'delivered'] }
+        });
+
+        if (completedOrders > 0) {
+          return res.status(400).json({
+            error: 'This discount code is only valid for first-time customers'
+          });
+        }
+      }
+
+      // Check if user has already used this discount code
+      if (discountDoc.usedBy && discountDoc.usedBy.includes(req.user._id)) {
+        return res.status(400).json({
+          error: 'You have already used this discount code'
+        });
+      }
+
       discount = discountDoc.calculateDiscount(subtotal);
       //  discountDetails = { code: discountDoc.code, amount: discount };
 
-      // Increment usage count atomically
-      await Discount.incrementUsage(discountDoc._id);
+      // Increment usage count and add user to usedBy array atomically
+      await Discount.findByIdAndUpdate(
+        discountDoc._id,
+        {
+          $inc: { usedCount: 1 },
+          $addToSet: { usedBy: req.user._id }
+        }
+      );
     }
 
     // Step 3: Calculate tax

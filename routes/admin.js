@@ -25,7 +25,7 @@ router.use(authenticate, requireAdmin);
  */
 router.post('/products', upload.array('images', 5), async (req, res) => {
   try {
-    const { title, description, price, category, tags = [], inventory = 0 } = req.body;
+    const { title, description, price, category, tags = [], inventory = 0, size, color, dimensions } = req.body;
 
     // Validate required fields
     if (!title || title.trim().length < 3) {
@@ -52,8 +52,29 @@ router.post('/products', upload.array('images', 5), async (req, res) => {
       publicId: file.filename
     }));
 
+    // Parse dimensions if provided
+    const productData = {
+      title,
+      description,
+      price: pricePaise,
+      images,
+      category,
+      tags,
+      inventory
+    };
+
+    if (size && size.trim()) productData.size = size.trim();
+    if (color && color.trim()) productData.color = color.trim();
+    if (dimensions) {
+      try {
+        productData.dimensions = typeof dimensions === 'string' ? JSON.parse(dimensions) : dimensions;
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid dimensions format' });
+      }
+    }
+
     // Let the Product model generate slug automatically (includes ID)
-    const p = await Product.create({ title, description, price: pricePaise, images, category, tags, inventory });
+    const p = await Product.create(productData);
     res.status(201).json({ product: p });
   } catch (err) {
     console.error('Create product error:', err);
@@ -141,12 +162,24 @@ router.put(
       }
 
 
-      const allowed = ['title', 'description', 'price', 'category', 'tags', 'inventory'];
+
+      const allowed = ['title', 'description', 'price', 'category', 'tags', 'inventory', 'size', 'color'];
       allowed.forEach(field => {
         if (updates[field] !== undefined) {
           product[field] = updates[field];
         }
       });
+
+      // Handle dimensions separately (needs JSON parsing)
+      if (updates.dimensions) {
+        try {
+          product.dimensions = typeof updates.dimensions === 'string'
+            ? JSON.parse(updates.dimensions)
+            : updates.dimensions;
+        } catch (e) {
+          return res.status(400).json({ error: 'Invalid dimensions format' });
+        }
+      }
 
       await product.save();
 

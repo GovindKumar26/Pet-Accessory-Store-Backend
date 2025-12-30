@@ -4,7 +4,8 @@ const OrderItem = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Product',
     required: true
-  }, title: { type: String, required: true },
+  },
+  title: { type: String, required: true },
   price: {
     type: Number,
     required: true,
@@ -13,9 +14,16 @@ const OrderItem = new mongoose.Schema({
       validator: Number.isInteger,
       message: 'Item price must be in paise (integer)'
     }
+  },
+  qty: { type: Number, required: true, min: 1 },
+
+  // Store product dimensions for shipping
+  dimensions: {
+    length: { type: Number, default: 10 },
+    breadth: { type: Number, default: 10 },
+    height: { type: Number, default: 10 },
+    weight: { type: Number, default: 0.5 }
   }
-  ,
-  qty: { type: Number, required: true, min: 1 }
 });
 
 

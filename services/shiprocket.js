@@ -111,10 +111,17 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
     // Shiprocket API expects "Prepaid" or "COD" (not all-caps "PREPAID")
     payment_method: order.payment.status === 'paid' ? 'Prepaid' : 'COD',
     sub_total: Number((order.subtotal / 100).toFixed(2)),
-    length: 10,
-    breadth: 10,
-    height: 10,
-    weight: 0.5
+
+    // Calculate package dimensions from products
+    // For multiple items, use the largest dimensions and sum the weights
+    length: order.items.reduce((max, item) =>
+      Math.max(max, item.dimensions?.length || 10), 10),
+    breadth: order.items.reduce((max, item) =>
+      Math.max(max, item.dimensions?.breadth || 10), 10),
+    height: order.items.reduce((max, item) =>
+      Math.max(max, item.dimensions?.height || 10), 10),
+    weight: order.items.reduce((total, item) =>
+      total + ((item.dimensions?.weight || 0.5) * item.qty), 0)
   };
 
   console.log('📦 Shiprocket Payload:', JSON.stringify(payload, null, 2));
