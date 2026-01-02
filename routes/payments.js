@@ -40,10 +40,7 @@ const generatePayUHash = (data, salt) => {
 
 
   // Construct hash string with exact parameter sequence
-  // Construct hash string with exact parameter sequence
   const hashString = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}|${udf2}|${udf3}|${udf4}|${udf5}||||||${salt}`;
-
-  console.log('PayU HASH STRING:', hashString);
 
   return crypto
     .createHash('sha512')
@@ -185,16 +182,14 @@ const verifyPayUHash = (data, salt) => {
 
   const finalHashString = `${hashString}|${udfSection}`;
 
-  console.log('--- PayU Verification Debug ---');
-  console.log('Final Hash String:', finalHashString);
-
   const generatedHash = crypto
     .createHash('sha512')
     .update(finalHashString)
     .digest('hex');
 
-  console.log('Generated:', generatedHash);
-  console.log('Received: ', data.hash);
+  if (process.env.NODE_ENV === 'development') {
+    console.log('PayU verification:', generatedHash === data.hash ? 'SUCCESS' : 'FAILED');
+  }
 
   return generatedHash === data.hash;
 };
@@ -303,7 +298,9 @@ router.post('/:orderId/initiate', authenticate, async (req, res) => {
 router.post('/success', async (req, res) => {
   try {
     const payuResponse = req.body;
-    console.log('PayU Success Callback:', payuResponse);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('PayU Success Callback - Order:', payuResponse.udf1);
+    }
 
     // 1. Extract orderId FIRST
     const orderId = payuResponse.udf1;
@@ -408,7 +405,9 @@ router.post('/success', async (req, res) => {
 router.post('/failure', async (req, res) => {
   try {
     const payuResponse = req.body;
-    console.log('PayU Failure Callback:', payuResponse);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('PayU Failure Callback - Order:', payuResponse.udf1);
+    }
 
     // 1. Extract orderId first
     const orderId = payuResponse.udf1;

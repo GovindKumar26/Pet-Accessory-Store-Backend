@@ -705,12 +705,12 @@ router.post('/orders/:id/ship', async (req, res) => {
 
       if (user) {
         await sendShippingNotificationEmail(order, user);
-        console.log('✅ Shipping email sent successfully to:', user.email);
+        console.log('[SUCCESS] Shipping email sent successfully to:', user.email);
       } else {
-        console.error('❌ User not found for userId:', order.userId);
+        console.error('[ERROR] User not found for userId:', order.userId);
       }
     } catch (emailError) {
-      console.error('❌ Email sending failed (non-critical):', emailError);
+      console.error('[ERROR] Email sending failed (non-critical):', emailError);
       console.error('Error details:', emailError.message);
     }
 

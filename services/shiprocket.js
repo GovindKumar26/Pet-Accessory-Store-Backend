@@ -64,21 +64,10 @@ const getPickupLocationByName = async (locationName) => {
 export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevelvettails.com') => {
   const token = await getShiprocketToken();
 
-  // Log the pickup location being used
   const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION || 'Primary';
-  console.log('📍 Shiprocket Pickup Location (from env):', pickupLocation);
-  console.log('📍 SHIPROCKET_PICKUP_LOCATION env var:', process.env.SHIPROCKET_PICKUP_LOCATION);
 
-  // Fetch and log all pickup locations from Shiprocket dashboard
-  try {
-    const dashboardLocations = await getPickupLocations();
-    console.log('📍 Shiprocket Dashboard Pickup Locations:', dashboardLocations.map(loc => ({
-      name: loc.pickup_location,
-      id: loc.id,
-      city: loc.city
-    })));
-  } catch (err) {
-    console.log('⚠️ Could not fetch dashboard pickup locations:', err.message);
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[INFO] Using Shiprocket Pickup Location:', pickupLocation);
   }
   const orderDate = new Date(order.createdAt);
   const formattedDate = `${orderDate.getFullYear()}-${String(orderDate.getMonth() + 1).padStart(2, '0')}-${String(orderDate.getDate()).padStart(2, '0')} ${String(orderDate.getHours()).padStart(2, '0')}:${String(orderDate.getMinutes()).padStart(2, '0')}`;
@@ -124,7 +113,9 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
       total + ((item.dimensions?.weight || 0.5) * item.qty), 0)
   };
 
-  console.log('📦 Shiprocket Payload:', JSON.stringify(payload, null, 2));
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[INFO] Shiprocket Order:', order.orderNumber);
+  }
 
   try {
     const response = await axios.post(
@@ -138,13 +129,15 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
       }
     );
 
-    console.log('✅ Shiprocket Order Response:', JSON.stringify(response.data, null, 2));
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[SUCCESS] Shiprocket order created:', response.data.order_id);
+    }
 
     const orderData = response.data;
 
     // If AWB wasn't assigned automatically, assign courier manually
     if (orderData.shipment_id && !orderData.awb_code) {
-      console.log('📦 AWB not assigned. Requesting courier assignment...');
+      console.log('[INFO] AWB not assigned. Requesting courier assignment...');
 
       try {
         const awbResponse = await axios.post(
@@ -158,7 +151,9 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
           }
         );
 
-        console.log('✅ Courier Assignment Response:', JSON.stringify(awbResponse.data, null, 2));
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[SUCCESS] Courier assigned:', awbResponse.data.response?.data?.courier_name);
+        }
 
         // Merge the AWB data into the response
         return {
@@ -168,7 +163,7 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
           courier_company_id: awbResponse.data.response?.data?.courier_company_id
         };
       } catch (awbError) {
-        console.error('⚠️ Courier assignment failed:', awbError.response?.data || awbError.message);
+        console.error('[WARNING] Courier assignment failed:', awbError.response?.data || awbError.message);
         // Return the order data anyway - AWB can be assigned later from Shiprocket dashboard
         return {
           ...orderData,
@@ -181,7 +176,7 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
     return orderData;
   } catch (error) {
     // Log detailed error from Shiprocket
-    console.error('❌ Shiprocket Error:', error.response?.status, JSON.stringify(error.response?.data, null, 2));
+    console.error('[ERROR] Shiprocket Error:', error.response?.status, JSON.stringify(error.response?.data, null, 2));
 
     // If 5xx error (server error), try once more with fresh token
     if (error.response?.status >= 500 && error.response?.status < 600) {
@@ -202,10 +197,10 @@ export const createShipmentFromOrder = async (order, userEmail = 'noreply@thevel
             timeout: 30000
           }
         );
-        console.log('✅ Shiprocket Retry Response:', JSON.stringify(retryResponse.data, null, 2));
+        console.log('[SUCCESS] Shiprocket Retry Response:', JSON.stringify(retryResponse.data, null, 2));
         return retryResponse.data;
       } catch (retryError) {
-        console.error('❌ Shiprocket Retry Error:', retryError.response?.status, JSON.stringify(retryError.response?.data, null, 2));
+        console.error('[ERROR] Shiprocket Retry Error:', retryError.response?.status, JSON.stringify(retryError.response?.data, null, 2));
         throw retryError;
       }
     }

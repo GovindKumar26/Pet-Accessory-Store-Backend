@@ -5,8 +5,10 @@ import rateLimit from 'express-rate-limit';
 // 1. Global - applies to all routes
 export const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: 'Too many requests from this IP, please try again later.'
+  max: 100,  // Reduced from 300 for production security
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // 2. Auth - strict for login/register (relaxed in development)
@@ -20,12 +22,12 @@ export const authLimiter = rateLimit({
 // 3. Admin - moderate for admin operations
 export const adminLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 100,
+  max: 30,  // Reduced from 100 for production security
   message: 'Too many admin requests, please slow down'
 });
 
 // 4. API - generous for public reads
 export const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 100
+  max: 60  // Reduced from 100 for production security
 });

@@ -1,8 +1,8 @@
 
+
 import express from "express";
 import 'dotenv/config';
-
-
+import crypto from 'crypto';
 
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -35,12 +35,51 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(cookieParser());
 
+// Configure Helmet security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Required for PayU integration
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 } else {
   app.use(morgan('combined'));
 }
 
+
+// Validate critical environment variables in production
+if (process.env.NODE_ENV === 'production') {
+  // Critical variables that MUST be set
+  const criticalVars = ['MONGO_URI', 'PAYU_MERCHANT_KEY', 'PAYU_MERCHANT_SALT'];
+  const missing = criticalVars.filter(varName => !process.env[varName]);
+
+  if (missing.length > 0) {
+    throw new Error(`CRITICAL: Missing required environment variables in production: ${missing.join(', ')}`);
+  }
+
+  // Warn about URLs but don't fail (can be set after initial deployment)
+  if (!process.env.FRONTEND_URL) {
+    console.warn('WARNING: FRONTEND_URL not set. CORS and payment redirects may not work correctly.');
+    console.warn('Set this to your frontend domain after deployment.');
+  }
+  if (!process.env.BACKEND_URL) {
+    console.warn('WARNING: BACKEND_URL not set. PayU payment callbacks may not work correctly.');
+    console.warn('Set this to your backend domain after deployment.');
+  }
+}
 
 // CORS configuration
 const FRONT = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -53,7 +92,8 @@ const corsOptions = {
       'http://localhost:5174',
       FRONT
     ],
-  credentials: true
+  credentials: true,
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
@@ -61,9 +101,13 @@ app.use(cors(corsOptions));
 
 app.use(express.static('public'));
 
+// Add request ID tracking for better debugging
+app.use((req, res, next) => {
+  req.id = crypto.randomUUID();
+  res.setHeader('X-Request-ID', req.id);
+  next();
+});
 
-// If you sit behind a reverse proxy in dev (less common) you might need:
-// app.set('trust proxy', true);
 // Always enable trust proxy - needed for Render and other PaaS deployments
 app.set('trust proxy', 1);
 
@@ -83,12 +127,21 @@ app.use('/api/admin', adminLimiter, adminRoutes);
 app.get('/api/ping', (req, res) => res.json({ ok: true, time: new Date() }));
 
 app.get('/api/health', async (req, res) => {
-  res.json({
-    status: 'OK',
+  const checks = {
+    mongodb: mongoose.connection.readyState === 1,
+  };
+
+  const allHealthy = Object.values(checks).every(v => v === true);
+
+  const health = {
+    status: allHealthy ? 'OK' : 'DEGRADED',
     timestamp: new Date(),
     uptime: process.uptime(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  });
+    mongodb: checks.mongodb ? 'connected' : 'disconnected',
+    environment: process.env.NODE_ENV || 'development'
+  };
+
+  res.status(allHealthy ? 200 : 503).json(health);
 });
 
 // 404 handler for undefined routes
@@ -102,12 +155,18 @@ app.use((req, res, next) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  if (process.env.NODE_ENV === 'development') console.error(err);
+  // Log error with request ID
+  console.error(`[${req.id || 'unknown'}] Error:`, process.env.NODE_ENV === 'development' ? err : err.message);
 
   const status = err.statusCode || err.status || 500;
-  const message = err.message || 'Server error';
+  const message = process.env.NODE_ENV === 'production'
+    ? (status < 500 ? err.message : 'Internal server error')
+    : err.message;
 
-  res.status(status).json({ error: message });
+  res.status(status).json({
+    error: message,
+    requestId: req.id
+  });
 });
 
 // Server configuration
@@ -128,6 +187,27 @@ connectDB()
 
 
 
+
+
+
+// Process error handlers
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION! Shutting down...');
+  console.error(err.name, err.message);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('UNHANDLED REJECTION! Shutting down...');
+  console.error(err.name, err.message);
+  if (server) {
+    server.close(() => {
+      process.exit(1);
+    });
+  } else {
+    process.exit(1);
+  }
+});
 
 const gracefulShutdown = async (signal) => {
   console.log(`\n Received ${signal}. Shutting down gracefully...`);

@@ -10,12 +10,19 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// Validate email configuration in production
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.SMTP_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error('CRITICAL: Email configuration incomplete. Set SMTP_HOST, EMAIL_USER, EMAIL_PASS');
+  }
+}
+
 // Verify transporter configuration
 transporter.verify((error, success) => {
   if (error) {
-    console.error('❌ Email transporter error:', error);
+    console.error('[ERROR] Email transporter error:', error);
   } else {
-    console.log('✅ Email service ready');
+    console.log('[SUCCESS] Email service ready');
   }
 });
 
@@ -80,13 +87,10 @@ export const sendVerificationEmail = async (email, name, token) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Verification email sent to ${email}`);
+    console.log(`[SUCCESS] Verification email sent to ${email}`);
     return true;
   } catch (error) {
-    console.error('❌ Error sending verification email:', error);
-    // Log the verification URL to console for development
-    console.log(`📧 Development: Verification URL for ${email}:`);
-    console.log(`   ${process.env.FRONTEND_URL || 'http://localhost:5174'}/verify-email?token=${token}`);
+    console.error('[ERROR] Error sending verification email:', error.message);
     return false;
   }
 };
@@ -189,9 +193,9 @@ export const sendOrderConfirmationEmail = async (order, user) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Order confirmation email sent to ${user.email} for order ${order.orderNumber}`);
+    console.log(`[SUCCESS] Order confirmation email sent to ${user.email} for order ${order.orderNumber}`);
   } catch (error) {
-    console.error('❌ Error sending order confirmation email:', error);
+    console.error('[ERROR] Error sending order confirmation email:', error);
   }
 };
 
@@ -226,7 +230,7 @@ export const sendShippingNotificationEmail = async (order, user) => {
         <body>
           <div class="container">
             <div class="header">
-              <h1>📦 Your Order Has Shipped!</h1>
+              <h1>Your Order Has Shipped!</h1>
             </div>
             
             <div class="content">
@@ -264,9 +268,9 @@ export const sendShippingNotificationEmail = async (order, user) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Shipping notification email sent to ${user.email} for order ${order.orderNumber}`);
+    console.log(`[SUCCESS] Shipping notification email sent to ${user.email} for order ${order.orderNumber}`);
   } catch (error) {
-    console.error('❌ Error sending shipping notification email:', error);
+    console.error('[ERROR] Error sending shipping notification email:', error);
   }
 };
 
@@ -296,7 +300,7 @@ export const sendRefundApprovalEmail = async (order, user) => {
         <body>
           <div class="container">
             <div class="header">
-              <h1>✅ Refund Approved</h1>
+              <h1>Refund Approved</h1>
             </div>
             
             <div class="content">
@@ -323,9 +327,9 @@ export const sendRefundApprovalEmail = async (order, user) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Refund approval email sent to ${user.email} for order ${order.orderNumber}`);
+    console.log(`[SUCCESS] Refund approval email sent to ${user.email} for order ${order.orderNumber}`);
   } catch (error) {
-    console.error('❌ Error sending refund approval email:', error);
+    console.error('[ERROR] Error sending refund approval email:', error);
   }
 };
 
@@ -386,9 +390,9 @@ export const sendRefundRejectionEmail = async (order, user, reason) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Refund rejection email sent to ${user.email} for order ${order.orderNumber}`);
+    console.log(`[SUCCESS] Refund rejection email sent to ${user.email} for order ${order.orderNumber}`);
   } catch (error) {
-    console.error('❌ Error sending refund rejection email:', error);
+    console.error('[ERROR] Error sending refund rejection email:', error);
   }
 };
 
@@ -449,14 +453,14 @@ export const sendOrderCancellationEmail = async (order, user) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Order cancellation email sent to ${user.email} for order ${order.orderNumber}`);
+    console.log(`[SUCCESS] Order cancellation email sent to ${user.email} for order ${order.orderNumber}`);
   } catch (error) {
-    console.error('❌ Error sending order cancellation email:', error);
+    console.error('[ERROR] Error sending order cancellation email:', error);
   }
 };
 
 export const sendDeliveryEmail = async (order, userEmail) => {
-  const subject = `📦 Order Delivered – ${order.orderNumber}`;
+  const subject = `Order Delivered - ${order.orderNumber}`;
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px">

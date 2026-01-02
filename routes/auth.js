@@ -8,8 +8,16 @@ import { sendVerificationEmail } from '../services/emailService.js';
 
 const router = express.Router();
 
-const signAccess = (payload) => jwt.sign(payload, process.env.JWT_ACCESS_SECRET || 'access_secret', { expiresIn: process.env.ACCESS_TOKEN_EXPIRES || '15m' });
-const signRefresh = (payload) => jwt.sign(payload, process.env.JWT_REFRESH_SECRET || 'refresh_secret', { expiresIn: process.env.REFRESH_TOKEN_EXPIRES || '7d' });
+// Validate JWT secrets are set (critical for security)
+const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+
+if (!JWT_ACCESS_SECRET || !JWT_REFRESH_SECRET) {
+  throw new Error('CRITICAL: JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be set in environment variables');
+}
+
+const signAccess = (payload) => jwt.sign(payload, JWT_ACCESS_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRES || '15m' });
+const signRefresh = (payload) => jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRES || '7d' });
 
 // helper to decide cookie flags based on environment
 const cookieOptions = () => {
@@ -261,7 +269,7 @@ router.post('/refresh', async (req, res) => {
     }
 
     try {
-      const payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET || 'refresh_secret');
+      const payload = jwt.verify(token, JWT_REFRESH_SECRET);
       const access = signAccess({ id: payload.id });
       res.json({ accessToken: access });
     } catch (e) {
